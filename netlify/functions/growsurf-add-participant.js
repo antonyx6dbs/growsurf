@@ -6,11 +6,13 @@ exports.handler = async (event) => {
     'Access-Control-Allow-Methods': 'POST,OPTIONS',
   };
   if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' };
-  if (event.httpMethod !== 'POST') return { statusCode: 405, headers, body: 'Method Not Allowed' };
+  if (event.httpMethod !== 'POST')  return { statusCode: 405, headers, body: 'Method Not Allowed' };
 
-  const campaignId = process.env.GROWSURF_CAMPAIGN_ID;
-  const apiKey     = process.env.GROWSURF_API_KEY;
+  // <-- Make sure we read and trim the vars
+  const campaignId = (process.env.GROWSURF_CAMPAIGN_ID || '').trim();
+  const apiKey     = (process.env.GROWSURF_API_KEY      || '').trim();
 
+  // Fail LOUDLY if missing
   if (!campaignId || !apiKey) {
     return {
       statusCode: 500,
@@ -26,11 +28,12 @@ exports.handler = async (event) => {
     const { email, firstName, lastName, advisorUrl, advisorName, ipAddress, fingerprint } = JSON.parse(event.body || '{}');
     if (!email) return { statusCode: 400, headers, body: JSON.stringify({ ok:false, error:'Missing email' }) };
 
+    // Call GrowSurf REST (header is case-insensitive, this form is canonical)
     const resp = await fetch(`https://api.growsurf.com/v2/campaign/${campaignId}/participant`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': apiKey,       // header name is case-insensitive, but use this canonical form
+        'X-API-KEY': apiKey
       },
       body: JSON.stringify({
         email, firstName, lastName, ipAddress, fingerprint,
@@ -42,6 +45,7 @@ exports.handler = async (event) => {
     let data; try { data = JSON.parse(text); } catch { data = { raw:text }; }
 
     if (!resp.ok) {
+      // Bubble up exact upstream status/body to help us debug
       return { statusCode: resp.status, headers, body: JSON.stringify({ ok:false, status:resp.status, upstream:data }) };
     }
 
