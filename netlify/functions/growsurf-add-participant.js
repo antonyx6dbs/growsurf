@@ -1,70 +1,52 @@
-// CommonJS Netlify Function (Node 18+ has global fetch)
-const ALLOWED_ORIGINS = [
-  'https://www.lucentfinancialplanning.co.uk',
-  'https://lucentfp.webflow.io',            // include your Webflow preview domain if you test there
-];
-
-function corsHeaders(origin) {
-  const allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
-  return {
-    'Access-Control-Allow-Origin': allow,
+exports.handler = async (event) => {
+  const origin = event.headers.origin || '';
+  const headers = {
+    'Access-Control-Allow-Origin': ['https://www.lucentfinancialplanning.co.uk','https://lucentfp.webflow.io'].includes(origin) ? origin : 'https://www.lucentfinancialplanning.co.uk',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Allow-Methods': 'POST,OPTIONS',
   };
-}
+  if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' };
+  if (event.httpMethod !== 'POST') return { statusCode: 405, headers, body: 'Method Not Allowed' };
 
-exports.handler = async (event) => {
-  const origin = event.headers.origin || '';
-  const headers = corsHeaders(origin);
+  const campaignId = process.env.GROWSURF_CAMPAIGN_ID;
+  const apiKey     = process.env.GROWSURF_API_KEY;
 
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' };
-  }
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, headers, body: 'Method Not Allowed' };
+  if (!campaignId || !apiKey) {
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({
+        ok: false,
+        error: `Missing env vars: ${!campaignId ? 'GROWSURF_CAMPAIGN_ID ' : ''}${!apiKey ? 'GROWSURF_API_KEY' : ''}`
+      })
+    };
   }
 
   try {
-    const { email, firstName, lastName, advisorUrl, advisorName, ipAddress, fingerprint } =
-      JSON.parse(event.body || '{}');
-
-    if (!email) {
-      return { statusCode: 400, headers, body: JSON.stringify({ ok: false, error: 'Missing email' }) };
-    }
-
-    const campaignId = process.env.GROWSURF_CAMPAIGN_ID; // e.g. "trtaq2"
-    const apiKey     = process.env.GROWSURF_API_KEY;     // your secret key
+    const { email, firstName, lastName, advisorUrl, advisorName, ipAddress, fingerprint } = JSON.parse(event.body || '{}');
+    if (!email) return { statusCode: 400, headers, body: JSON.stringify({ ok:false, error:'Missing email' }) };
 
     const resp = await fetch(`https://api.growsurf.com/v2/campaign/${campaignId}/participant`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-API-KEY': apiKey,
+        'x-api-key': apiKey,       // header name is case-insensitive, but use this canonical form
       },
       body: JSON.stringify({
-        email,
-        firstName,
-        lastName,
-        ipAddress,
-        fingerprint,
-        metadata: {
-          advisorUrl: advisorUrl || null,
-          advisorName: advisorName || null,
-        },
+        email, firstName, lastName, ipAddress, fingerprint,
+        metadata: { advisorUrl: advisorUrl || null, advisorName: advisorName || null }
       }),
     });
 
-    const data = await resp.json();
+    const text = await resp.text();
+    let data; try { data = JSON.parse(text); } catch { data = { raw:text }; }
+
     if (!resp.ok) {
-      return { statusCode: resp.status, headers, body: JSON.stringify({ ok: false, error: data }) };
+      return { statusCode: resp.status, headers, body: JSON.stringify({ ok:false, status:resp.status, upstream:data }) };
     }
 
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({ ok: true, participant: data, shareUrl: data.shareUrl || null }),
-    };
+    return { statusCode: 200, headers, body: JSON.stringify({ ok:true, participant:data, shareUrl:data.shareUrl || null }) };
   } catch (err) {
-    return { statusCode: 500, headers, body: JSON.stringify({ ok: false, error: String(err) }) };
+    return { statusCode: 500, headers, body: JSON.stringify({ ok:false, error:String(err) }) };
   }
 };
